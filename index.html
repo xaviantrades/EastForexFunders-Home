@@ -83,9 +83,13 @@ th{color:#9eafca;font-weight:600}td input{min-width:100px;padding:7px}td button{
 const $ = id => document.getElementById(id);
 
 function workerUrl(path) {
-  const base = $("apiBase").value.trim().replace(/\\/+$/ "");
-  if (!base) throw new Error("Enter your Cloudflare Worker URL.");
-  return base + path;
+    const base = $("apiBase").value.trim().replace(/\/+$/, "");
+
+    if (!base) {
+        throw new Error("Enter your Cloudflare Worker URL.");
+    }
+
+    return base + "/" + path.replace(/^\/+/, "");
 }
 function adminHeaders() {
   const key = $("adminKey").value;
