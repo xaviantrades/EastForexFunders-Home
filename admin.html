@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kilele Capital — Admin</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#e8edf7;background:#0b1020}
+*{box-sizing:border-box}body{margin:0;padding:24px}.wrap{max-width:1050px;margin:auto}
+header{margin-bottom:22px}h1{font-size:25px;margin:0 0 5px}p{color:#aab6cc;margin:0}
+.card{background:#121a2d;border:1px solid #26334c;border-radius:14px;padding:20px;margin:16px 0}
+h2{font-size:17px;margin:0 0 16px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+label{display:block;font-size:13px;color:#b7c3d8;margin-bottom:6px}
+input,select{width:100%;padding:11px 12px;border-radius:8px;border:1px solid #35445f;background:#0c1425;color:#f3f6fc;font:inherit}
+button{border:0;border-radius:8px;background:#74a7ff;color:#081326;padding:11px 15px;font-weight:700;cursor:pointer}
+button.secondary{background:#263651;color:#edf3ff}button:disabled{opacity:.6;cursor:wait}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.notice{padding:11px 13px;border-radius:8px;margin-top:12px;display:none;white-space:pre-wrap}
+.notice.ok{display:block;background:#123529;color:#a8f0cb}.notice.err{display:block;background:#421e2a;color:#ffb8c4}
+.small{font-size:12px;color:#9cabc3;margin-top:8px}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:700px}th,td{text-align:left;padding:10px;border-bottom:1px solid #293650;font-size:13px}
+th{color:#9eafca;font-weight:600}td input{min-width:100px;padding:7px}td button{padding:7px 9px;font-size:12px}
+.pill{display:inline-block;border-radius:20px;padding:3px 8px;background:#203d32;color:#a8f0cb;font-size:11px}
+@media(max-width:650px){body{padding:13px}.grid{grid-template-columns:1fr}.card{padding:15px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Kilele Capital Admin</h1>
+  <p>Create trading accounts and manage assigned balances.</p>
+</header>
+
+<section class="card">
+  <h2>Connection and administrator access</h2>
+  <div class="grid">
+    <div>
+      <label for="apiBase">Worker URL</label>
+      <input id="apiBase" type="url" placeholder="https://your-worker.your-subdomain.workers.dev">
+    </div>
+    <div>
+      <label for="adminKey">Administrator key</label>
+      <input id="adminKey" type="password" autocomplete="off" placeholder="Paste your ADMIN_KEY secret">
+    </div>
+  </div>
+  <p class="small">The key is kept only in this page's memory; it is not saved to local storage. Use HTTPS and do not share this page or key.</p>
+  <div class="actions"><button id="loadBtn" class="secondary" type="button">Load accounts</button></div>
+  <div id="connectionNotice" class="notice"></div>
+</section>
+
+<section class="card">
+  <h2>Create account</h2>
+  <form id="createForm">
+    <div class="grid">
+      <div><label for="name">User's display name</label><input id="name" required maxlength="100" autocomplete="off"></div>
+      <div><label for="login">Login number (assigned by you)</label><input id="login" required maxlength="64" autocomplete="off"></div>
+      <div><label for="server">Server</label><input id="server" required value="Kilele-Demo" maxlength="100"></div>
+      <div><label for="password">Initial password (minimum 10 characters)</label><input id="password" type="password" required minlength="10" autocomplete="new-password"></div>
+      <div><label for="balance">Starting account balance</label><input id="balance" type="number" required min="0" max="1000000000000" step="0.01" value="100000"></div>
+      <div><label for="currency">Currency</label><select id="currency"><option value="USD">USD</option><option value="UGX">UGX</option><option value="EUR">EUR</option><option value="GBP">GBP</option></select></div>
+      <div><label for="demo">Account type</label><select id="demo"><option value="1">Demo</option><option value="0">Real / live-labelled</option></select></div>
+    </div>
+    <div class="actions"><button id="createBtn" type="submit">Create account</button></div>
+    <div id="createNotice" class="notice"></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Existing accounts</h2>
+  <p class="small">Shows up to the latest 300 accounts. Balance changes here update D1 directly.</p>
+  <div class="table-wrap" style="margin-top:12px">
+    <table>
+      <thead><tr><th>ID</th><th>Login</th><th>Name</th><th>Server</th><th>Balance</th><th>Type</th><th>Status</th><th>Update balance</th></tr></thead>
+      <tbody id="usersBody"><tr><td colspan="8">Enter the Worker URL and administrator key, then select Load accounts.</td></tr></tbody>
+    </table>
+  </div>
+  <div id="listNotice" class="notice"></div>
+</section>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+function workerUrl(path) {
+  const base = $("apiBase").value.trim().replace(/\\/+$/, "");
+  if (!base) throw new Error("Enter your Cloudflare Worker URL.");
+  return base + path;
+}
+function adminHeaders() {
+  const key = $("adminKey").value;
+  if (!key) throw new Error("Enter the administrator key.");
+  return { "Content-Type": "application/json", "X-Admin-Key": key };
+}
+function showNotice(id, message, ok=false) {
+  const box = $(id);
+  box.textContent = message;
+  box.className = "notice " + (ok ? "ok" : "err");
+}
+async function api(path, options={}) {
+  const response = await fetch(workerUrl(path), {
+    ...options,
+    headers: { ...adminHeaders(), ...(options.headers || {}) }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success) throw new Error(data.message || `Request failed (${response.status})`);
+  return data;
+}
+
+$("createForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = $("createBtn");
+  button.disabled = true;
+  try {
+    const payload = {
+      name: $("name").value.trim(),
+      login: $("login").value.trim(),
+      server: $("server").value.trim(),
+      password: $("password").value,
+      balance: Number($("balance").value),
+      currency: $("currency").value,
+      demo: $("demo").value === "1"
+    };
+    const result = await api("/api/admin/create-user", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    showNotice("createNotice", `Created account ${result.user.login} for ${result.user.name}. Starting balance: ${result.user.currency} ${Number(result.user.balance).toLocaleString()}.`, true);
+    $("password").value = "";
+    await loadUsers();
+  } catch (error) {
+    showNotice("createNotice", error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+async function loadUsers() {
+  const data = await api("/api/admin/users");
+  const body = $("usersBody");
+  body.replaceChildren();
+  if (!data.users.length) {
+    body.innerHTML = '<tr><td colspan="8">No accounts found.</td></tr>';
+    return;
+  }
+  for (const user of data.users) {
+    const row = document.createElement("tr");
+    const values = [
+      user.id, user.login, user.name, user.server,
+      `${user.currency} ${Number(user.balance).toLocaleString()}`,
+      user.demo ? "Demo" : "Live-labelled",
+      user.status
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value ?? "");
+      row.appendChild(cell);
+    }
+    const actionCell = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "number"; input.min = "0"; input.step = "0.01";
+    input.max = "1000000000000"; input.value = Number(user.balance);
+    input.setAttribute("aria-label", `New balance for account ${user.id}`);
+    const button = document.createElement("button");
+    button.type = "button"; button.textContent = "Save";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api("/api/admin/update-balance", {
+          method: "PATCH",
+          body: JSON.stringify({ id: user.id, balance: Number(input.value) })
+        });
+        showNotice("listNotice", `Updated balance for login ${user.login}.`, true);
+        await loadUsers();
+      } catch (error) {
+        showNotice("listNotice", error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    actionCell.append(input, document.createTextNode(" "), button);
+    row.appendChild(actionCell);
+    body.appendChild(row);
+  }
+}
+$("loadBtn").addEventListener("click", async () => {
+  $("loadBtn").disabled = true;
+  try {
+    await loadUsers();
+    showNotice("connectionNotice", "Connected. Account list loaded.", true);
+  } catch (error) {
+    showNotice("connectionNotice", error.message);
+  } finally {
+    $("loadBtn").disabled = false;
+  }
+});
+</script>
+</body>
+</html>
